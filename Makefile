@@ -2,7 +2,7 @@ CC ?= gcc
 CFLAGS = -g -Wall -Wextra -O2 -fPIC
 LDFLAGS = -shared -ldl
 
-.PHONY: all clean capture replay sample test-dry
+.PHONY: all clean capture replay sample test-dry test-live
 
 all: capture/kbase_capture.so
 
@@ -14,6 +14,9 @@ sample:
 
 test-dry: sample
 	python3 replay.py test.mcap --dry-run
+
+test-live:
+	python3 examples/init.py
 
 replay:
 	chmod +x replay.py

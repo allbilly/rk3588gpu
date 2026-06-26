@@ -7,6 +7,10 @@ import os
 
 from kbase_ioctl import _ioc_size, ioctl_name
 
+_libc = ctypes.CDLL(None, use_errno=True)
+_libc.ioctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p]
+_libc.ioctl.restype = ctypes.c_int
+
 
 class KbaseDevice:
     """Thin wrapper around the Arm kbase character device."""
@@ -27,18 +31,18 @@ class KbaseDevice:
         self.close()
 
     def ioctl(self, request: int, buf: ctypes.Array | ctypes.Structure | None = None) -> int:
-        libc = ctypes.CDLL(None, use_errno=True)
         if buf is None:
             size = _ioc_size(request)
             if size:
                 buf = (ctypes.c_uint8 * size)()
             else:
-                rc = libc.ioctl(self.fd, request, 0)
+                rc = _libc.ioctl(self.fd, request, 0)
                 if rc < 0:
                     err = ctypes.get_errno()
                     raise OSError(err, os.strerror(err), ioctl_name(request))
                 return rc
-        rc = libc.ioctl(self.fd, request, buf)
+        arg = buf if isinstance(buf, ctypes.Array) else ctypes.byref(buf)
+        rc = _libc.ioctl(self.fd, request, arg)
         if rc < 0:
             err = ctypes.get_errno()
             raise OSError(err, os.strerror(err), ioctl_name(request))

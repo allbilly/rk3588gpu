@@ -65,16 +65,19 @@ class KbaseMemAllocOut(ctypes.Structure):
     _fields_ = [("flags", ctypes.c_uint64), ("gpu_va", ctypes.c_uint64)]
 
 
-class KbaseMemAlloc(ctypes.Structure):
-    _fields_ = [("in_", KbaseMemAllocIn), ("out", KbaseMemAllocOut)]
+class KbaseMemAlloc(ctypes.Union):
+    class _In(ctypes.Structure):
+        _fields_ = [
+            ("va_pages", ctypes.c_uint64),
+            ("commit_pages", ctypes.c_uint64),
+            ("extension", ctypes.c_uint64),
+            ("flags", ctypes.c_uint64),
+        ]
 
-    @property
-    def in_fields(self) -> KbaseMemAllocIn:
-        return self.in_
+    class _Out(ctypes.Structure):
+        _fields_ = [("flags", ctypes.c_uint64), ("gpu_va", ctypes.c_uint64)]
 
-    @in_fields.setter
-    def in_fields(self, v: KbaseMemAllocIn) -> None:
-        self.in_ = v
+    _fields_ = [("in_", _In), ("out", _Out)]
 
 
 class KbaseMemAllocExIn(ctypes.Structure):
@@ -88,8 +91,12 @@ class KbaseMemAllocExIn(ctypes.Structure):
     ]
 
 
-class KbaseMemAllocEx(ctypes.Structure):
-    _fields_ = [("in_", KbaseMemAllocExIn), ("out", KbaseMemAllocOut)]
+class KbaseMemAllocExOut(ctypes.Structure):
+    _fields_ = [("flags", ctypes.c_uint64), ("gpu_va", ctypes.c_uint64)]
+
+
+class KbaseMemAllocEx(ctypes.Union):
+    _fields_ = [("in_", KbaseMemAllocExIn), ("out", KbaseMemAllocExOut)]
 
 
 class KbaseCsQueueRegister(ctypes.Structure):
@@ -118,7 +125,7 @@ class KbaseCsQueueBindOut(ctypes.Structure):
     _fields_ = [("mmap_handle", ctypes.c_uint64)]
 
 
-class KbaseCsQueueBind(ctypes.Structure):
+class KbaseCsQueueBind(ctypes.Union):
     _fields_ = [("in_", KbaseCsQueueBindIn), ("out", KbaseCsQueueBindOut)]
 
 
@@ -146,7 +153,7 @@ class KbaseCsQueueGroupCreateOut(ctypes.Structure):
     ]
 
 
-class KbaseCsQueueGroupCreate(ctypes.Structure):
+class KbaseCsQueueGroupCreate(ctypes.Union):
     _fields_ = [("in_", KbaseCsQueueGroupCreateIn), ("out", KbaseCsQueueGroupCreateOut)]
 
 
@@ -170,20 +177,20 @@ class KbaseCsGetGlbIfaceOut(ctypes.Structure):
     ]
 
 
-class KbaseCsGetGlbIface(ctypes.Structure):
+class KbaseCsGetGlbIface(ctypes.Union):
     _fields_ = [("in_", KbaseCsGetGlbIfaceIn), ("out", KbaseCsGetGlbIfaceOut)]
 
 
 # ioctl requests
 IOCTL_VERSION_CHECK = _iowr(KBASE_IOCTL_TYPE, 52, "<HH")
 IOCTL_SET_FLAGS = _iow(KBASE_IOCTL_TYPE, 1, "<I")
-IOCTL_MEM_ALLOC = _iowr(KBASE_IOCTL_TYPE, 5, "<QQQQQQ")
-IOCTL_MEM_ALLOC_EX = _iowr(KBASE_IOCTL_TYPE, 59, "<QQQQQQQQQQQQ")
+IOCTL_MEM_ALLOC = _iowr(KBASE_IOCTL_TYPE, 5, "<QQQQ")
+IOCTL_MEM_ALLOC_EX = _iowr(KBASE_IOCTL_TYPE, 59, "<QQQQQQQQ")
 IOCTL_CS_QUEUE_REGISTER = _iow(KBASE_IOCTL_TYPE, 36, "<QIB3x")
 IOCTL_CS_QUEUE_KICK = _iow(KBASE_IOCTL_TYPE, 37, "<Q")
-IOCTL_CS_QUEUE_BIND = _iowr(KBASE_IOCTL_TYPE, 39, "<QBB6xQ")
-IOCTL_CS_QUEUE_GROUP_CREATE = _iowr(KBASE_IOCTL_TYPE, 58, "<QQQBBBBBB2xQQ")
-IOCTL_CS_GET_GLB_IFACE = _iowr(KBASE_IOCTL_TYPE, 51, "<IIQQIIIIII")
+IOCTL_CS_QUEUE_BIND = _iowr(KBASE_IOCTL_TYPE, 39, "<QBB6x")
+IOCTL_CS_QUEUE_GROUP_CREATE = _iowr(KBASE_IOCTL_TYPE, 58, "<QQQBBBBBB2xQ")
+IOCTL_CS_GET_GLB_IFACE = _iowr(KBASE_IOCTL_TYPE, 51, "<IIQQ")
 IOCTL_CS_EVENT_SIGNAL = _io(KBASE_IOCTL_TYPE, 44)
 IOCTL_GET_CONTEXT_ID = _ior(KBASE_IOCTL_TYPE, 17, "<I")
 IOCTL_TLSTREAM_ACQUIRE = _iow(KBASE_IOCTL_TYPE, 18, "<I")
