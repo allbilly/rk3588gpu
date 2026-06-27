@@ -58,7 +58,6 @@ class FlagVal:
     """Bit flags used in syncobj descriptors and queue submit args."""
     SYNC_OBJ_HANDLE    = 0x80000000          # timeline-sync point (vs binary)
     SYNC_OBJ_FOREVER   = 0x7FFFFFFFFFFFFFFF  # infinite-wait sentinel
-    SYNC_HANDLE_NONE   = 0xFFFFFFFF          # wildcard / no-handle marker
 
 
 # ── Runtime syncobj values ────────────────────────────────────────
@@ -70,10 +69,8 @@ class SyncVal:
 
 INPUT_A = (1, 2, 3, 4)
 INPUT_B = (10, 20, 30, 40)
-EXPECTED = (11, 22, 33, 44)
 
 MESA_VADD_CS_VA = 0x7FFFFFFB2000
-MESA_VA_OUT = 0x7FFFFFFCB000
 MESA_VA_A = 0x7FFFFFFCA000
 MESA_VA_B = 0x7FFFFFFB1000
 MESA_BO_BA000_VA = 0x7FFFFFFBA000
@@ -748,19 +745,6 @@ class GroupQueueCreate:
         return bytes(buf)
 
 
-@dataclass
-class GemLoad:
-    """BO snapshot before GROUP_SUBMIT."""
-
-    handle: int
-    gpu_va: int
-    bo_offset: int
-    data: bytes = field(repr=False)
-
-    @property
-    def head_hex(self) -> str:
-        return self.data[:32].hex()
-
 # ── recipe + replay ───────────────────────────────────────────────
 
 
@@ -877,7 +861,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=SyncobjCreateOut(handle=1, flags=1),
     ),
     # VM_CREATE
-    IoctlStep(nr=65, request=0xc0106441,
+    IoctlStep(nr=NR.VM_CREATE, request=0xc0106441,
         arg=VmCreateIn(user_va_range=0x800000000000),
         cap_out=VmCreateOut(id=1, user_va_range=0x800000000000),
     ),
@@ -887,7 +871,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=1),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -900,7 +884,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoMmapOut(handle=1, offset=0x1000B0000),
     ),
     # 0x0c
-    IoctlStep(nr=12, request=0xc010640c,
+    IoctlStep(nr=NR.DEV_QUERY, request=0xc010640c,
         arg_raw=_pack_u64s((0x0000000000000005, 0x0000000000000000)),
         cap_out_raw=_pack_u64s((0x0000000000000005, 0x0000000000000003)),
     ),
@@ -910,7 +894,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=2),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -933,7 +917,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=3),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -951,7 +935,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=4),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -974,7 +958,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=16384, exclusive_vm_id=1, handle=5),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1005,7 +989,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=6),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1023,7 +1007,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=0x10000, flags=1, exclusive_vm_id=1, handle=7),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1036,7 +1020,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=8),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1054,7 +1038,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=9),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1072,7 +1056,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=10),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1117,7 +1101,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=11),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1140,7 +1124,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=16384, exclusive_vm_id=1, handle=12),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1171,7 +1155,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=13),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1189,7 +1173,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=0x10000, flags=1, exclusive_vm_id=1, handle=14),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1202,7 +1186,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=15),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1220,7 +1204,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=16),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1238,7 +1222,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=17),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1273,7 +1257,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=18),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1291,7 +1275,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=0x10000, exclusive_vm_id=1, handle=19),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1309,7 +1293,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=32768, exclusive_vm_id=1, handle=20),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1345,7 +1329,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=21),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1391,7 +1375,7 @@ MESA_INIT_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=4096, exclusive_vm_id=1, handle=22),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1437,7 +1421,7 @@ VADD_STEPS: list[RecipeStep] = [
         ],
     ),
     # SYNCOBJ_TRANSFER
-    IoctlStep(nr=204, request=0xc02064cc,
+    IoctlStep(nr=NR.SYNCOBJ_TRANSFER, request=0xc02064cc,
         arg=SyncobjTransferIn(src_handle=1, dst_handle=4, src_point=1),
         cap_out_raw=_pack_u64s((0x0000000400000001, 0x0000000000000001, SyncVal.NONE, SyncVal.NONE)),
     ),
@@ -1456,7 +1440,7 @@ VADD_STEPS: list[RecipeStep] = [
         cap_out=BoCreateOut(size=0x10000, exclusive_vm_id=1, handle=23),
     ),
     # VM_BIND
-    IoctlStep(nr=67, request=0xc0186443,
+    IoctlStep(nr=NR.VM_BIND, request=0xc0186443,
         arg=VmBindIn(vm_id=1, ops_stride=48, ops_count=1),
         cap_out=VmBindOut(vm_id=1, ops_stride=48, ops_count=1),
         sides=[
@@ -1567,30 +1551,21 @@ VADD_STEPS: list[RecipeStep] = [
 
 from pathlib import Path
 
-PANT_SIDE_VM_BIND_OPS = 1
-PANT_SIDE_QUEUE_SUBMITS = 2
-PANT_SIDE_GROUP_QUEUES = 3
-PANT_SIDE_SYNC_OPS = 4
-PANT_SIDE_DEV_QUERY = 5
-PANT_SIDE_BIND_SYNC_OPS = 6
-PANT_SIDE_SYNCOBJ_HANDLES = 7
-PANT_SIDE_SYNCOBJ_POINTS = 8
-
 DRM_BASE = 0x40
-NR_DEV_QUERY = DRM_BASE + 0
-NR_VM_CREATE = DRM_BASE + 1
-NR_VM_BIND = DRM_BASE + 3
-NR_BO_CREATE = DRM_BASE + 5
-NR_BO_MMAP = DRM_BASE + 6
-NR_GROUP_CREATE = DRM_BASE + 7
-NR_GROUP_SUBMIT = DRM_BASE + 9
-NR_TILER_HEAP_CREATE = DRM_BASE + 11
-NR_BO_SET_LABEL = DRM_BASE + 13
-NR_SYNCOBJ_CREATE = 0xBF
-NR_SYNCOBJ_WAIT = 0xC3
-NR_SYNCOBJ_FD_TO_HANDLE = 0xC2
-NR_SYNCOBJ_TIMELINE_WAIT = 0xCA
-SKIP_IOCTLS = {NR_BO_SET_LABEL, NR_SYNCOBJ_FD_TO_HANDLE, 0xC0}
+Req_DEV_QUERY = DRM_BASE + 0
+Req_VM_CREATE = DRM_BASE + 1
+Req_VM_BIND = DRM_BASE + 3
+Req_BO_CREATE = DRM_BASE + 5
+Req_BO_MMAP = DRM_BASE + 6
+Req_GROUP_CREATE = DRM_BASE + 7
+Req_GROUP_SUBMIT = DRM_BASE + 9
+Req_TILER_HEAP_CREATE = DRM_BASE + 11
+Req_BO_SET_LABEL = DRM_BASE + 13
+Req_SYNCOBJ_CREATE = 0xBF
+Req_SYNCOBJ_WAIT = 0xC3
+Req_SYNCOBJ_FD_TO_HANDLE = 0xC2
+Req_SYNCOBJ_TIMELINE_WAIT = 0xCA
+SKIP_IOCTLS = {Req_BO_SET_LABEL, Req_SYNCOBJ_FD_TO_HANDLE, NR.SYNCOBJ_DESTROY}
 _PAGE = 4096
 _FLUSH_MMIO_OFF = (1 << 56) if ctypes.sizeof(ctypes.c_void_p) >= 8 else (1 << 43)
 EXPECTED = (11, 22, 33, 44)
@@ -1658,37 +1633,37 @@ def _patch_syncobj_handles(buf: bytearray, hmap: dict[int, int]) -> None:
 
 
 def _patch_ioctl_arg(nr: int, buf: bytearray, hmap: dict[int, int]) -> None:
-    if nr == NR_VM_BIND:
+    if nr == Req_VM_BIND:
         _patch_u32(buf, 0, hmap)
-    elif nr == NR_BO_MMAP:
+    elif nr == Req_BO_MMAP:
         _patch_u32(buf, 0, hmap)
-    elif nr == NR_GROUP_SUBMIT:
+    elif nr == Req_GROUP_SUBMIT:
         _patch_u32(buf, 0, hmap)
-    elif nr == NR_GROUP_CREATE and len(buf) >= 44:
+    elif nr == Req_GROUP_CREATE and len(buf) >= 44:
         _patch_u32(buf, 40, hmap)  # vm_id
-    elif nr == NR_TILER_HEAP_CREATE:
+    elif nr == Req_TILER_HEAP_CREATE:
         _patch_u32(buf, 0, hmap)  # vm_id
         _patch_u32(buf, 4, hmap)  # heap handle (input)
-    elif nr == 0xCC:
+    elif nr == NR.SYNCOBJ_TRANSFER:
         _patch_u32(buf, 0, hmap)
         _patch_u32(buf, 4, hmap)
-    elif nr in (0xC0, 0xC2):
+    elif nr in (NR.SYNCOBJ_DESTROY, NR.SYNCOBJ_FD_TO_HANDLE):
         _patch_u32(buf, 0, hmap)
-    elif nr == NR_BO_CREATE and len(buf) >= 20:
+    elif nr == Req_BO_CREATE and len(buf) >= 20:
         _patch_u32(buf, 16, hmap)  # handle extension / import
 
 
 def _learn(nr: int, cap_out: bytes, live: bytes, hmap: dict[int, int]) -> None:
     pairs: list[tuple[int, int]] = []
-    if nr == NR_BO_CREATE and len(cap_out) >= 20:
+    if nr == Req_BO_CREATE and len(cap_out) >= 20:
         pairs.append((struct.unpack_from("<I", cap_out, 16)[0], struct.unpack_from("<I", live, 16)[0]))
-    elif nr == NR_VM_CREATE and len(cap_out) >= 8:
+    elif nr == Req_VM_CREATE and len(cap_out) >= 8:
         pairs.append((struct.unpack_from("<I", cap_out, 4)[0], struct.unpack_from("<I", live, 4)[0]))
-    elif nr == NR_GROUP_CREATE and len(cap_out) >= 48:
+    elif nr == Req_GROUP_CREATE and len(cap_out) >= 48:
         pairs.append((struct.unpack_from("<I", cap_out, 44)[0], struct.unpack_from("<I", live, 44)[0]))
-    elif nr == NR_SYNCOBJ_CREATE and len(cap_out) >= 4:
+    elif nr == Req_SYNCOBJ_CREATE and len(cap_out) >= 4:
         pairs.append((struct.unpack_from("<I", cap_out, 0)[0], struct.unpack_from("<I", live, 0)[0]))
-    elif nr == NR_TILER_HEAP_CREATE and len(cap_out) >= 36:
+    elif nr == Req_TILER_HEAP_CREATE and len(cap_out) >= 36:
         pairs.append((struct.unpack_from("<I", cap_out, 32)[0], struct.unpack_from("<I", live, 32)[0]))
     for old, new in pairs:
         if old and new:
@@ -1905,15 +1880,15 @@ def replay_events(events: list[tuple], *, verbose: bool = False) -> int:
                 sides.append((sk, sb))
             keep.append(sb)
 
-        if nr == NR_DEV_QUERY and sides:
+        if nr == Req_DEV_QUERY and sides:
             struct.pack_into("<Q", arg, 8, ctypes.addressof(sides[0][1]))
-        elif nr == NR_VM_BIND and sides:
+        elif nr == Req_VM_BIND and sides:
             struct.pack_into("<Q", arg, 16, ctypes.addressof(sides[0][1]))
             if bind_sync:
                 struct.pack_into("<Q", sides[0][1], 40, ctypes.addressof(bind_sync[0]))
-        elif nr == NR_GROUP_CREATE and sides:
+        elif nr == Req_GROUP_CREATE and sides:
             struct.pack_into("<Q", arg, 8, ctypes.addressof(sides[0][1]))
-        elif nr == NR_GROUP_SUBMIT:
+        elif nr == Req_GROUP_SUBMIT:
             qs = next((sb for k, sb in sides if k == PANT_SIDE_QUEUE_SUBMITS), None)
             if qs is not None:
                 struct.pack_into("<Q", arg, 16, ctypes.addressof(qs))
@@ -1923,7 +1898,7 @@ def replay_events(events: list[tuple], *, verbose: bool = False) -> int:
                     struct.pack_into("<Q", qs, 32, ctypes.addressof(sync))
                 if struct.unpack_from("<I", qs, 4)[0] == 160:
                     _sync_mapped_bos(fd, mmaps, hmap, write=True)
-        elif nr == NR_SYNCOBJ_WAIT:
+        elif nr == Req_SYNCOBJ_WAIT:
             for sk, sb in sides:
                 if sk == PANT_SIDE_SYNCOBJ_HANDLES:
                     hb = bytearray(sb)
@@ -1932,7 +1907,7 @@ def replay_events(events: list[tuple], *, verbose: bool = False) -> int:
                         sb[i] = b
                     struct.pack_into("<Q", arg, 0, ctypes.addressof(sb))
                     break
-        elif nr == NR_SYNCOBJ_TIMELINE_WAIT:
+        elif nr == Req_SYNCOBJ_TIMELINE_WAIT:
             handles_sb = next((sb for k, sb in sides if k == PANT_SIDE_SYNCOBJ_HANDLES), None)
             points_sb = next((sb for k, sb in sides if k == PANT_SIDE_SYNCOBJ_POINTS), None)
             if handles_sb is None:
@@ -1952,7 +1927,7 @@ def replay_events(events: list[tuple], *, verbose: bool = False) -> int:
         try:
             ret = _ioctl(fd, req, buf)
         except OSError as exc:
-            if (req & 0xFF) in (NR_SYNCOBJ_WAIT, NR_SYNCOBJ_TIMELINE_WAIT) and exc.errno in (22, 62):
+            if (req & 0xFF) in (Req_SYNCOBJ_WAIT, Req_SYNCOBJ_TIMELINE_WAIT) and exc.errno in (22, 62):
                 if verbose:
                     print(f"[{idx}] ioctl 0x{req:08x} wait skipped ({exc})")
                 idx += 1
@@ -1978,7 +1953,7 @@ def replay_events(events: list[tuple], *, verbose: bool = False) -> int:
                     return 0
                 time.sleep(0.01)
 
-        if nr == NR_GROUP_SUBMIT:
+        if nr == Req_GROUP_SUBMIT:
             sync = next((sb for k, sb in sides if k == PANT_SIDE_SYNC_OPS), None)
             if sync is not None and len(sync) >= 16:
                 flags, sig_handle = struct.unpack_from("<II", sync, 0)
@@ -1998,11 +1973,11 @@ def replay_events(events: list[tuple], *, verbose: bool = False) -> int:
             if rc == 0:
                 return 0
 
-        if nr == NR_BO_CREATE and len(live) >= 20:
+        if nr == Req_BO_CREATE and len(live) >= 20:
             handle = struct.unpack_from("<I", live, 16)[0]
             bo_size[handle] = struct.unpack_from("<Q", live, 0)[0]
 
-        if nr == NR_BO_MMAP and len(live) >= 16:
+        if nr == Req_BO_MMAP and len(live) >= 16:
             handle = struct.unpack_from("<I", live, 0)[0]
             offset = struct.unpack_from("<Q", live, 8)[0]
             size = bo_size.get(handle, 4096)
@@ -2011,7 +1986,7 @@ def replay_events(events: list[tuple], *, verbose: bool = False) -> int:
                 fd, map_sz, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=offset
             )
 
-        if nr == NR_SYNCOBJ_WAIT or nr == NR_SYNCOBJ_TIMELINE_WAIT:
+        if nr == Req_SYNCOBJ_WAIT or nr == Req_SYNCOBJ_TIMELINE_WAIT:
             rc = _drain_output(fd, mmaps, hmap)
             if rc == 0:
                 return 0
