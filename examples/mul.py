@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Vector add on Mali G610 — standalone pure Python (panthor DRM).
+"""Vector mul on Mali G610 — standalone pure Python (panthor DRM).
 
-Self-contained: Mesa CS/BO payloads as u64 tuples, panthor_drm structs, init/vadd recipe.
-Decoded from Mesa/rusticl capture (add_cl2.pcap).
+Self-contained: Mesa CS/BO payloads as u64 tuples, panthor_drm structs, init/vmul recipe.
+Decoded from Mesa/rusticl capture (mul_cl.pcap).
 
-Workload: [1,2,3,4] + [10,20,30,40] -> [11,22,33,44] (uint32)
+Workload: [1,2,3,4] * [10,20,30,40] -> [10,40,90,160] (uint32)
 
 Regenerate:
-  python3 experiemental/tools/panthor_pcap2add.py /tmp/add_cl2.pcap
+  python3 experiemental/tools/panthor_pcap2add.py /tmp/mul_cl.pcap
 
 Reference: allbilly/applegpu experimental/cap2standalone.py
 """
-# generated from add_cl2.pcap (2026-06-27 02:44 UTC) — do not edit recipe by hand
+# generated from mul_cl.pcap (2026-06-27 02:44 UTC) — do not edit recipe by hand
 
 from __future__ import annotations
 
@@ -70,9 +70,9 @@ class SyncVal:
 
 INPUT_A = (1, 2, 3, 4)
 INPUT_B = (10, 20, 30, 40)
-EXPECTED = (11, 22, 33, 44)
+EXPECTED = (10, 40, 90, 160)
 
-MESA_VADD_CS_VA = 0x7FFFFFFB2000
+MESA_VMUL_CS_VA = 0x7FFFFFFB2000
 MESA_VA_OUT = 0x7FFFFFFCB000
 MESA_VA_A = 0x7FFFFFFCA000
 MESA_VA_B = 0x7FFFFFFB1000
@@ -116,7 +116,7 @@ class ExecFlags:
 
 # ── Captured Valhall compute shader binary ────────────────────────
 class Insn:
-    """Captured Valhall shader qwords — Mesa-compiled add kernel binary."""
+    """Captured Valhall shader qwords — Mesa-compiled mul kernel binary."""
     SHADER_A_HDR       = 0x00a0c000000a8081
     SHADER_A_S0        = 0x00a8c0000000407c
     SHADER_A_S1        = 0x00a8c00000008940
@@ -232,7 +232,7 @@ def build_mesa_bo_ba000() -> bytes:
     """Mesa compute pipeline/exec descriptors for BO @ MESA_BO_BA000_VA (handle 19).
 
     Capture had 576 nonzero-prefix bytes in a 64KiB BO; only 11 qwords matter.
-  A/B VAs and in-BO pointers are wired for the vadd kernel."""
+  A/B VAs and in-BO pointers are wired for the vmul kernel."""
     buf = bytearray(576)
 
     def q(off: int, val: int) -> None:
@@ -245,9 +245,9 @@ def build_mesa_bo_ba000() -> bytes:
     q(Reg.SCRATCH_VA,       MesaConst.SCRATCH_VA)  # scratch BO (handle 22)
     q(Reg.WORK_DIM,         4)
     q(Reg.PIPELINE_FLAGS_B, MesaConst.PIPELINE_FLAGS)
-    q(Reg.EXEC_PTR_HI,      exec_ptr(MESA_BO_BA000_VA, 0x140, ExecFlags.DEFAULT))
+    q(Reg.EXEC_PTR_HI,      exec_ptr(MESA_BO_BA000_VA, 0x140, ExecFlags.MUL_FLAG))
     q(Reg.EXEC_SIZE,        0x20)
-    q(Reg.EXEC_PTR_LO,      exec_ptr(MESA_BO_BA000_VA, 0x120, ExecFlags.DEFAULT))
+    q(Reg.EXEC_PTR_LO,      exec_ptr(MESA_BO_BA000_VA, 0x120, ExecFlags.MUL_FLAG))
     q(Reg.EXEC_SIZE_LO,     0x20)
     return bytes(buf)
 
@@ -287,7 +287,7 @@ def build_mesa_bo_fc000() -> bytes:
     q(Reg.CNOP0,      Insn.CNOP_B0)
     q(Reg.CNOP1,      Insn.CNOP_B1)
     q(Reg.STORE_A1,   Insn.STORE_A_SUFFIX)
-    q(Reg.ARITH_WARP_A, alu32(Op.IADD, dest=0x42, src0=0x43, src1=0xC2))   # vadd: W42 = W43 + Wc2
+    q(Reg.ARITH_WARP_A, alu32(Op.IMUL, dest=0x42, src0=0x43, src1=0xC2))   # vmul: W42 = W43 + Wc2
     q(Reg.S9,         Insn.SHADER_A_S9)
     q(Reg.S10,        Insn.SHADER_A_S10)
     q(Reg.BR_A2,      Insn.SHADER_A_BR2)
@@ -314,7 +314,7 @@ def build_mesa_bo_fc000() -> bytes:
     q(Reg.CNOP4,      Insn.CNOP_B0)
     q(Reg.CNOP5,      Insn.CNOP_B1)
     q(Reg.STORE_B1,   Insn.STORE_A_SUFFIX)
-    q(Reg.ARITH_WARP_B, alu32(Op.IADD, dest=0x42, src0=0x43, src1=0xC2))   # vadd: W42 = W43 + Wc2
+    q(Reg.ARITH_WARP_B, alu32(Op.IMUL, dest=0x42, src0=0x43, src1=0xC2))   # vmul: W42 = W43 + Wc2
     q(Reg.S25,        Insn.SHADER_B_S25)
     q(Reg.S26,        Insn.SHADER_B_S26)
     q(Reg.S27,        Insn.SHADER_B_S27)
@@ -394,8 +394,8 @@ def _cs_flush_signal() -> int:
     return 0x11 | (0x02 << 8) | (0x24 << 56)
 
 
-def build_mesa_vadd_cs() -> bytes:
-    """Mesa compute dispatch CSF stream (160B) for GROUP_SUBMIT @ MESA_VADD_CS_VA."""
+def build_mesa_vmul_cs() -> bytes:
+    """Mesa compute dispatch CSF stream (160B) for GROUP_SUBMIT @ MESA_VMUL_CS_VA."""
     def q(words: list[int]) -> bytes:
         return b"".join(w.to_bytes(8, "little") for w in words)
 
@@ -423,7 +423,7 @@ def build_mesa_vadd_cs() -> bytes:
     ])
 
 
-MESA_VADD_CS = build_mesa_vadd_cs()
+MESA_VMUL_CS = build_mesa_vmul_cs()
 
 # ── panthor_drm struct codecs ─────────────────────────────────────
 
@@ -859,13 +859,13 @@ def steps_to_tuples(steps: list[RecipeStep], *, inputs: dict[str, tuple[int, ...
     return tuples
 
 
-def mesa_vadd(
+def mesa_vmul(
     input_a: tuple[int, ...],
     input_b: tuple[int, ...],
     *,
     verbose: bool = False,
 ) -> int:
-    steps = [*MESA_INIT_STEPS, *VADD_STEPS]
+    steps = [*MESA_INIT_STEPS, *VMUL_STEPS]
     inputs = {"INPUT_A": input_a, "INPUT_B": input_b}
     return replay_events(steps_to_tuples(steps, inputs=inputs), verbose=verbose)
 
@@ -1420,12 +1420,12 @@ MESA_INIT_STEPS: list[RecipeStep] = [
     ),
 ]
 
-VADD_STEPS: list[RecipeStep] = [
+VMUL_STEPS: list[RecipeStep] = [
     GemConst(cap_handle=0x3, gpu_va=0x7fffffffd000, bo_offset=0, blob="MESA_BO_FFFFD000"),
     GemConst(cap_handle=0x4, gpu_va=0x7fffffffc000, bo_offset=0, blob="MESA_BO_FFFFC000"),
     GemU32s(cap_handle=0x12, gpu_va=0x7ffffffca000, values="INPUT_A"),
     GemConst(cap_handle=0x13, gpu_va=0x7ffffffba000, bo_offset=0, blob="MESA_BO_FFFBA000"),
-    GemConst(cap_handle=0x14, gpu_va=0x7ffffffb2000, bo_offset=0, blob="MESA_VADD_CS"),
+    GemConst(cap_handle=0x14, gpu_va=0x7ffffffb2000, bo_offset=0, blob="MESA_VMUL_CS"),
     GemU32s(cap_handle=0x15, gpu_va=0x7ffffffb1000, values="INPUT_B"),
     # GROUP_SUBMIT
     IoctlStep(nr=NR.GROUP_SUBMIT, request=0xc0186449,
@@ -1593,7 +1593,7 @@ NR_SYNCOBJ_TIMELINE_WAIT = 0xCA
 SKIP_IOCTLS = {NR_BO_SET_LABEL, NR_SYNCOBJ_FD_TO_HANDLE, 0xC0}
 _PAGE = 4096
 _FLUSH_MMIO_OFF = (1 << 56) if ctypes.sizeof(ctypes.c_void_p) >= 8 else (1 << 43)
-EXPECTED = (11, 22, 33, 44)
+EXPECTED = (10, 40, 90, 160)
 
 
 def _read_flush_id(fd: int) -> int:
@@ -2033,11 +2033,11 @@ def main() -> int:
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
     if args.dry_run:
-        print(f"init steps: {len(MESA_INIT_STEPS)}  vadd steps: {len(VADD_STEPS)}")
+        print(f"init steps: {len(MESA_INIT_STEPS)}  vmul steps: {len(VMUL_STEPS)}")
         print(f"A={list(INPUT_A)} B={list(INPUT_B)} expected={list(EXPECTED)}")
         return 0
     try:
-        return mesa_vadd(INPUT_A, INPUT_B, verbose=args.verbose)
+        return mesa_vmul(INPUT_A, INPUT_B, verbose=args.verbose)
     except OSError as exc:
         print(exc, file=sys.stderr)
         return 1
