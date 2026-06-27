@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
-"""Vector add on Mali G610 — standalone pure Python (panthor DRM).
+"""Replay panthor capture from add_cl2.pcap — standalone, no LD_PRELOAD.
 
-Decoded from Mesa/rusticl capture (add_cl2.pcap): ioctl replay + embedded CS blobs.
-Replay engine matches examples/add_replay.py; this is the minimal PASS slice.
-
-Workload: [1,2,3,4] + [10,20,30,40] -> [11,22,33,44] (uint32)
+Capture:
+  gcc -shared -fPIC -o /tmp/panthor_capture.so experiemental/capture/panthor_capture.c -ldl
+  CAPTURE_PATH=/tmp/add_cl.pcap LD_PRELOAD=/tmp/panthor_capture.so python3 examples/add_cl.py
 
 Regenerate:
-  make -C experiemental capture-panthor CAP=/tmp/add_cl2.pcap
-  python3 experiemental/tools/panthor_pcap2add.py /tmp/add_cl2.pcap
-
-Also see:
-  examples/add_replay.py  — full capture replay
-  examples/add_old.py     — hand-coded CSF loop (broken)
-  examples/add_cl.py      — OpenCL health check
+  python3 experiemental/tools/panthor_pcap2replay.py /tmp/add_cl2.pcap
 """
 
 from __future__ import annotations
@@ -25,26 +18,17 @@ import mmap
 import os
 import struct
 import sys
+
+"""Replay panthor .pcap captures (used by panthor_pcap2replay.py)."""
+
+import ctypes
+import glob
+import mmap
+import os
+import struct
+import sys
 import time
 from pathlib import Path
-
-# --- Decoded Mesa command streams (from capture) ---
-MESA_VADD_CS = bytes.fromhex(
-    ''.join([
-        "0f00000000000022020000000000001708a2fbffff7f000180a1fbff00000802ff7f00040000090220d0ffffff7f1001c0a1fbffff7f18010000000000002002",
-        "03000080000021020000000000002202000000000000230200000000000024020100000000002502010000000000260201000000000027020180000000000004",
-        "0000ff00000000030000000000004a0211020000004a00240000010000000003"
-    ]),
-)
-MESA_VADD_CS_VA = 0x7FFFFFFB2000
-MESA_VA_OUT = 0x7FFFFFFCB000
-MESA_VA_A = 0x7FFFFFFCA000
-MESA_VA_B = 0x7FFFFFFB1000
-MESA_USER_VA_RANGE = 0x800000000000
-
-INPUT_A = (1, 2, 3, 4)
-INPUT_B = (10, 20, 30, 40)
-EXPECTED = (11, 22, 33, 44)
 
 PANT_SIDE_VM_BIND_OPS = 1
 PANT_SIDE_QUEUE_SUBMITS = 2
@@ -505,7 +489,133 @@ def replay_events(events: list[tuple], *, verbose: bool = False) -> int:
     print("FAIL: expected output not found in mapped BOs", file=sys.stderr)
     return 1
 
-MESA_CAPTURE = [
+
+
+
+CAPTURE = [
+    (
+        "ioctl",
+        0xc0406400,
+        0,
+        bytes.fromhex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+        bytes.fromhex("01000000050000000000000000000000070000000000000000000000000000000100000000000000000000000000000012000000000000000000000000000000"),
+    ),
+    (
+        "ioctl",
+        0xc0406400,
+        0,
+        bytes.fromhex("0100000005000000000000000000000007000000000000001012f928000000000100000000000000e0170a29000000001200000000000000c0170a2900000000"),
+        bytes.fromhex("0100000005000000000000000000000007000000000000001012f928000000000100000000000000e0170a29000000001200000000000000c0170a2900000000"),
+    ),
+    (
+        "ioctl",
+        0xc0406400,
+        0,
+        bytes.fromhex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+        bytes.fromhex("01000000050000000000000000000000070000000000000000000000000000000100000000000000000000000000000012000000000000000000000000000000"),
+    ),
+    (
+        "ioctl",
+        0xc0406400,
+        0,
+        bytes.fromhex("0100000005000000000000000000000007000000000000008059f728000000000100000000000000e0a90a2900000000120000000000000090a50a2900000000"),
+        bytes.fromhex("0100000005000000000000000000000007000000000000008059f728000000000100000000000000e0a90a2900000000120000000000000090a50a2900000000"),
+    ),
+    (
+        "ioctl",
+        0xc0406400,
+        0,
+        bytes.fromhex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+        bytes.fromhex("01000000050000000000000000000000070000000000000000000000000000000100000000000000000000000000000012000000000000000000000000000000"),
+    ),
+    (
+        "ioctl",
+        0xc0406400,
+        0,
+        bytes.fromhex("01000000050000000000000000000000070000000000000000aa0a2900000000010000000000000070aa0a29000000001200000000000000e0a90a2900000000"),
+        bytes.fromhex("01000000050000000000000000000000070000000000000000aa0a2900000000010000000000000070aa0a29000000001200000000000000e0a90a2900000000"),
+    ),
+    (
+        "ioctl",
+        0xc0406400,
+        0,
+        bytes.fromhex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+        bytes.fromhex("01000000050000000000000000000000070000000000000000000000000000000100000000000000000000000000000012000000000000000000000000000000"),
+    ),
+    (
+        "ioctl",
+        0xc0406400,
+        0,
+        bytes.fromhex("01000000050000000000000000000000070000000000000010000b2900000000010000000000000070000b2900000000120000000000000050000b2900000000"),
+        bytes.fromhex("01000000050000000000000000000000070000000000000010000b2900000000010000000000000070000b2900000000120000000000000050000b2900000000"),
+    ),
+    (
+        "ioctl",
+        0xc0406400,
+        0,
+        bytes.fromhex("00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
+        bytes.fromhex("01000000050000000000000000000000070000000000000000000000000000000100000000000000000000000000000012000000000000000000000000000000"),
+    ),
+    (
+        "ioctl",
+        0xc0406400,
+        0,
+        bytes.fromhex("01000000050000000000000000000000070000000000000040090b29000000000100000000000000c0090b29000000001200000000000000e0090b2900000000"),
+        bytes.fromhex("01000000050000000000000000000000070000000000000040090b29000000000100000000000000c0090b29000000001200000000000000e0090b2900000000"),
+    ),
+    (
+        "side",
+        5,
+        bytes.fromhex(
+            ''.join([
+                "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+                "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            ]),
+        ),
+    ),
+    (
+        "ioctl",
+        0xc0106440,
+        0,
+        bytes.fromhex("000000007000000098cafe2800000000"),
+        bytes.fromhex("000000007000000098cafe2800000000"),
+    ),
+    (
+        "side",
+        5,
+        bytes.fromhex("000000000000000000000000000000000000000000000000"),
+    ),
+    (
+        "ioctl",
+        0xc0106440,
+        0,
+        bytes.fromhex("010000001800000008cbfe2800000000"),
+        bytes.fromhex("010000001800000008cbfe2800000000"),
+    ),
+    (
+        "side",
+        5,
+        bytes.fromhex("000000000000000000000000000000000000000000000000"),
+    ),
+    (
+        "ioctl",
+        0xc0106440,
+        0,
+        bytes.fromhex("020000001800000020cbfe2800000000"),
+        bytes.fromhex("020000001800000020cbfe2800000000"),
+    ),
+    (
+        "side",
+        5,
+        bytes.fromhex("00000000"),
+    ),
+    (
+        "ioctl",
+        0xc0106440,
+        0,
+        bytes.fromhex("030000000400000038cbfe2800000000"),
+        bytes.fromhex("030000000400000038cbfe2800000000"),
+    ),
     (
         "ioctl",
         0xc00864bf,
@@ -7504,10 +7614,16 @@ MESA_CAPTURE = [
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--from", dest="start", type=int, default=18,
+                   help="skip first N capture events (default 18: after dev_query)")
+    p.add_argument("--until", type=int, default=0, help="stop after N events (0=all)")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
+    events = CAPTURE[args.start :]
+    if args.until:
+        events = events[: args.until]
     try:
-        return replay_events(MESA_CAPTURE, verbose=args.verbose)
+        return replay_events(events, verbose=args.verbose)
     except OSError as exc:
         print(exc, file=sys.stderr)
         return 1

@@ -9,7 +9,7 @@ See **[gpt-deepresearch.md](gpt-deepresearch.md)** for the full porting report (
 
 | Stack | Device node | UAPI | This repo |
 |-------|-------------|------|-----------|
-| **Panfrost / Panthor** (Mesa, open source) | `/dev/dri/renderD128` | `drm/panfrost_drm.h` — `CREATE_BO`, `MMAP_BO`, `SUBMIT`, `WAIT_BO` | Not implemented here; see `gpt-deepresearch.md` § *direct_add.py* |
+| **Panthor** (mainline) | `/dev/dri/renderD128` | DRM panthor ioctls + CSF stream | **`examples/add.py`** — standalone like applegpu |
 | **Proprietary kbase** (Rockchip BSP) | `/dev/mali0` | `mali_kbase_csf_ioctl.h` — CSF ioctls | **Implemented** — capture, replay, examples |
 
 On many RK3588 boards (including Orange Pi with the vendor `mali` module), **`/dev/mali0` is the GPU** and `renderD128` is the display subsystem, not Panfrost. The research doc notes:
@@ -62,22 +62,73 @@ replay.py         # replay captures (dry-run or live)
 cs_disasm.py      # CSF command stream disassembler
 capture/          # LD_PRELOAD interposer → .mcap
 examples/
-  add.py          # vector add workload (applegpu-shaped; partial on BSP)
-  init.py         # minimal live GPU init (VERSION_CHECK → queue group)
-tools/mcap.py     # synthesize test captures
+  add.py          # standalone vector add (panthor DRM ioctls + CSF stream)
+  add_cl.py       # optional OpenCL via Mesa rusticl
+  cl_add.c        # same OpenCL workload in C
+  init.py         # minimal kbase init (/dev/mali0 — needs BSP kernel)
+experiemental/    # kbase capture/replay, hand-coded panthor CS (ioctl research)
 ```
 
 ## Quick start
 
+### GPU vector add (mainline panthor — DRM, pure Python)
+
+Standalone script — no repo imports, no OpenCL:
+
 ```bash
-make test-dry     # parse synthetic capture (any host)
-make test-live    # send real ioctls to /dev/mali0 (needs video group)
-make capture APP=./your_gles_app CAP=foo.mcap   # record ioctls from libmali app
-python3 replay.py foo.mcap --dry-run            # inspect
-python3 replay.py foo.mcap                      # replay on GPU
+python3 examples/add.py
+python3 examples/add.py --dry-run -v
 ```
 
-Permissions: user must be in the `video` group (or root) for `/dev/mali0`.
+Opens `/dev/dri/renderD128`, builds a CSF command stream, submits via
+`DRM_IOCTL_PANTHOR_GROUP_SUBMIT`. Expected:
+
+```
+A=[1, 2, 3, 4]
+B=[10, 20, 30, 40]
+out=[11, 22, 33, 44]
+expected=[11, 22, 33, 44]
+PASS
+```
+
+If submit times out after prior `CS_FATAL` kernel errors, **reboot** to reset the GPU.
+
+**Optional** Mesa OpenCL path (works today on Armbian; not applegpu-style).
+
+One-time setup:
+
+```bash
+sudo apt install mesa-opencl-icd ocl-icd-libopencl1 clinfo
+export RUSTICL_ENABLE=panfrost   # rusticl hides the GPU unless opted in
+clinfo                           # should list Mali-G610 MC4 (Panfrost)
+```
+
+Run:
+
+```bash
+python3 examples/add_cl.py
+# or C build: make -C examples cl-add   # needs ocl-icd-opencl-dev build-essential
+```
+
+Expected:
+
+```
+device: Mali-G610 MC4 (Panfrost)
+out=[11, 22, 33, 44]
+PASS
+```
+
+### Kbase capture / replay (BSP `/dev/mali0` — vendor kernel)
+
+```bash
+make -C experiemental test-dry     # parse synthetic capture (any host)
+make -C experiemental test-live    # send real ioctls to /dev/mali0
+make -C experiemental capture APP=./your_gles_app CAP=foo.mcap
+python3 experiemental/replay.py foo.mcap --dry-run
+python3 experiemental/replay.py foo.mcap
+```
+
+Permissions: `video` or `render` group for `/dev/mali0` or `/dev/dri/renderD128`.
 
 ## References
 

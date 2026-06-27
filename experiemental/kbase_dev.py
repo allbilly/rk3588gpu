@@ -7,6 +7,8 @@ import os
 
 from kbase_ioctl import _ioc_size, ioctl_name
 
+__all__ = ["KbaseDevice", "find_mali_device"]
+
 _libc = ctypes.CDLL(None, use_errno=True)
 _libc.ioctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p]
 _libc.ioctl.restype = ctypes.c_int
@@ -64,9 +66,4 @@ def find_mali_device() -> str | None:
     for path in ("/dev/mali0", "/dev/mali"):
         if os.path.exists(path):
             return path
-    dri = "/dev/dri"
-    if os.path.isdir(dri):
-        for name in sorted(os.listdir(dri)):
-            if name.startswith("renderD"):
-                return os.path.join(dri, name)
     return None

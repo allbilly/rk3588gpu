@@ -4,9 +4,7 @@
 Opens /dev/mali0 and replays the first ioctls every CSF client needs:
   VERSION_CHECK → SET_FLAGS → CS_GET_GLB_IFACE → CS_QUEUE_GROUP_CREATE
 
-Mirrors applegpu examples/ and gpt-deepresearch.md § *Apple add.py Key Steps*
-(steps 1–3 on the proprietary /dev/mali0 path; see examples/add.py for the
-full workload).
+For mainline panthor experiments see experiemental/panthor/panthor_init.py.
 """
 
 from __future__ import annotations
@@ -19,8 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from cap_decode import repr_value
-from cap_decode import decode_ioctl_out
+from cap_decode import decode_ioctl_out, repr_value
 from kbase_dev import KbaseDevice, find_mali_device
 from kbase_ioctl import (
     IOCTL_CS_GET_GLB_IFACE,
@@ -40,7 +37,7 @@ MAX_STREAMS = 64
 def run(*, device: str | None, submit: bool) -> int:
     dev_path = device or find_mali_device()
     if not dev_path:
-        print("no Mali device (/dev/mali0)", file=sys.stderr)
+        print("no Mali kbase device (/dev/mali0)", file=sys.stderr)
         return 1
 
     print(f"device: {dev_path}")
@@ -56,8 +53,7 @@ def run(*, device: str | None, submit: bool) -> int:
         dev.ioctl(IOCTL_VERSION_CHECK, vc)
         print(f"VERSION_CHECK: major={vc.major} minor={vc.minor}")
 
-        flags = KbaseSetFlags(create_flags=0)
-        dev.ioctl(IOCTL_SET_FLAGS, flags)
+        dev.ioctl(IOCTL_SET_FLAGS, KbaseSetFlags(create_flags=0))
         print("SET_FLAGS: ok")
 
         glb = KbaseCsGetGlbIface()
