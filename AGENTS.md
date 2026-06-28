@@ -12,3 +12,5 @@ ask deepwiki ref repo
 - ROCKNIX/mesa-panfork
 - intel-lgci-fdo-gitlab-mirror/mesa.mesa
 - torvalds/linux
+
+https://www.collabora.com/news-and-blog/blog/2026/05/14/building-tyr-in-rust-csf-architecture-and-booting-the-mcu/
