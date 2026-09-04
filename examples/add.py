@@ -848,10 +848,15 @@ def mesa_vadd(
     input_b: tuple[int, ...],
     *,
     verbose: bool = False,
+    trace: bool = True,
 ) -> int:
     steps = [*MESA_INIT_STEPS, *VADD_STEPS]
     inputs = {"INPUT_A": input_a, "INPUT_B": input_b}
-    return replay_events(steps_to_tuples(steps, inputs=inputs), verbose=verbose)
+    return replay_events(
+        steps_to_tuples(steps, inputs=inputs),
+        verbose=verbose,
+        trace=trace,
+    )
 
 
 MESA_INIT_STEPS: list[RecipeStep] = [
@@ -1570,6 +1575,171 @@ _PAGE = 4096
 _FLUSH_MMIO_OFF = (1 << 56) if ctypes.sizeof(ctypes.c_void_p) >= 8 else (1 << 43)
 EXPECTED = (11, 22, 33, 44)
 
+Req_SYNCOBJ_TRANSFER = 0xCC
+
+_TRACE_STAGES = (
+    "Init and I/O setup",
+    "Resource allocation and buffer setup",
+    "Queue/program setup",
+    "Submit GPU work",
+    "Wait and completion",
+    "Result validation",
+)
+
+
+def _ioctl_stage_name(nr: int) -> str:
+    if nr == Req_SYNCOBJ_TRANSFER:
+        return _TRACE_STAGES[3]
+    if nr in (
+        Req_VM_CREATE,
+        Req_VM_BIND,
+        Req_BO_CREATE,
+        Req_BO_MMAP,
+        Req_SYNCOBJ_CREATE,
+        Req_SYNCOBJ_FD_TO_HANDLE,
+        Req_TILER_HEAP_CREATE,
+        Req_BO_SET_LABEL,
+        Req_DEV_QUERY,
+    ):
+        return _TRACE_STAGES[1]
+    if nr == Req_GROUP_CREATE:
+        return _TRACE_STAGES[2]
+    if nr == Req_GROUP_SUBMIT:
+        return _TRACE_STAGES[3]
+    if nr in (Req_SYNCOBJ_WAIT, Req_SYNCOBJ_TIMELINE_WAIT):
+        return _TRACE_STAGES[4]
+    return _TRACE_STAGES[5]
+
+
+class _StageTrace:
+    """Small staged tracer inspired by nvgpu-style run annotations."""
+
+    def __init__(self, enabled: bool):
+        self.enabled = enabled
+        self.stage_id = 0
+        self.stage_step = 0
+        self.section_id = 0
+        self.current_stage: str | None = None
+        self.stage_enter = 0.0
+        self.started = 0.0
+        self.section_total_ms: dict[int, float] = {}
+        self.section_event_count: dict[int, int] = {}
+        self.section_label: dict[int, str] = {}
+        self.section_order: list[int] = []
+        self.logical_total_ms: dict[str, float] = {}
+        self.logical_event_count: dict[str, int] = {}
+        self.logical_order: list[str] = []
+        self.event_count = 0
+
+    def begin(self) -> None:
+        if not self.enabled:
+            return
+        self.started = time.perf_counter()
+        self.stage_enter = self.started
+        print("trace: staged replay enabled", flush=True)
+
+    def _start_stage(self, stage: str) -> None:
+        if not self.enabled:
+            return
+        if stage == self.current_stage:
+            return
+        now = time.perf_counter()
+        if self.current_stage:
+            self.section_total_ms[self.stage_id] = (
+                self.section_total_ms.get(self.stage_id, 0.0) + (now - self.stage_enter) * 1000.0
+            )
+        self.current_stage = stage
+        self.stage_step = 0
+        self.stage_enter = now
+        self.section_id += 1
+        self.stage_id = self.section_id
+        self.section_order.append(self.stage_id)
+        self.section_label[self.stage_id] = stage
+        self.section_total_ms[self.stage_id] = 0.0
+        self.section_event_count[self.stage_id] = 0
+        if stage not in self.logical_total_ms:
+            self.logical_total_ms[stage] = 0.0
+            self.logical_event_count[stage] = 0
+            self.logical_order.append(stage)
+        print(f"\n[S{self.stage_id}] {stage}", flush=True)
+
+    def _current_stage_id(self) -> int:
+        return self.stage_id
+
+    def ioevent(self, idx: int, nr: int, req: int, *, ret: int, cap_ret: int) -> None:
+        if not self.enabled:
+            return
+        stage = _ioctl_stage_name(nr)
+        self._start_stage(stage)
+        self.stage_step += 1
+        self.event_count += 1
+        self.section_event_count[self.stage_id] += 1
+        self.logical_event_count[stage] += 1
+        stage_id = self._current_stage_id()
+        print(
+            f"  [S{stage_id}.{self.stage_step}] idx={idx} "
+            f"{_ioctl_name(nr)} req=0x{req:08x} ret={ret} cap={cap_ret}",
+            flush=True,
+        )
+
+    def skip(self, idx: int, nr: int, req: int, reason: str) -> None:
+        if not self.enabled:
+            return
+        stage = _ioctl_stage_name(nr)
+        self._start_stage(stage)
+        self.stage_step += 1
+        stage_id = self._current_stage_id()
+        self.event_count += 1
+        self.section_event_count[self.stage_id] += 1
+        self.logical_event_count[stage] += 1
+        print(
+            f"  [S{stage_id}.{self.stage_step}] idx={idx} {_ioctl_name(nr)} req=0x{req:08x} skipped ({reason})",
+            flush=True,
+        )
+
+    def seed(self, idx: int, handle: int, blen: int, va: int) -> None:
+        if not self.enabled:
+            return
+        stage = _TRACE_STAGES[1]
+        self._start_stage(stage)
+        self.stage_step += 1
+        self.event_count += 1
+        self.section_event_count[self.stage_id] += 1
+        self.logical_event_count[stage] += 1
+        stage_id = self._current_stage_id()
+        print(
+            f"  [S{stage_id}.{self.stage_step}] idx={idx} seed handle={handle} len={blen} off={va}",
+            flush=True,
+        )
+
+    def finish(self, *, ok: bool) -> None:
+        if not self.enabled:
+            return
+        now = time.perf_counter()
+        if self.current_stage:
+            self.section_total_ms[self.stage_id] = (
+                self.section_total_ms.get(self.stage_id, 0.0) + (now - self.stage_enter) * 1000.0
+            )
+        for section_id in self.section_order:
+            name = self.section_label[section_id]
+            self.logical_total_ms[name] = self.logical_total_ms.get(name, 0.0) + self.section_total_ms.get(section_id, 0.0)
+        elapsed = (now - self.started) * 1000.0 if self.started else 0.0
+        status = "PASS" if ok else "FAIL"
+        print("\nTrace summary:", flush=True)
+        print(f"status={status} events={self.event_count} elapsed_ms={elapsed:.2f}", flush=True)
+        for stage_id in self.section_order:
+            print(
+                f"  [S{stage_id}] {self.section_label[stage_id]:<32} "
+                f"events={self.section_event_count.get(stage_id, 0):03d} time_ms={self.section_total_ms.get(stage_id, 0.0):.2f}",
+                flush=True,
+            )
+        print("Logical stage totals:", flush=True)
+        for name in self.logical_order:
+            print(
+                f"  {name:<32} events={self.logical_event_count.get(name, 0):03d} time_ms={self.logical_total_ms.get(name, 0.0):.2f}",
+                flush=True,
+            )
+
 
 def _read_flush_id(fd: int) -> int:
     mm = mmap.mmap(fd, _PAGE, mmap.MAP_SHARED, mmap.PROT_READ, offset=_FLUSH_MMIO_OFF)
@@ -1821,11 +1991,20 @@ def _scan_expected(mmaps: dict[int, mmap.mmap]) -> tuple[int, ...] | None:
     return None
 
 
-def replay_events(events: list[tuple], *, verbose: bool = False) -> int:
+def replay_events(
+    events: list[tuple],
+    *,
+    verbose: bool = False,
+    trace: bool = True,
+) -> int:
     path = find_render()
     fd = os.open(path, os.O_RDWR)
+    tracer = _StageTrace(enabled=trace)
+    tracer.begin()
     if verbose:
         print(f"render: {path}")
+    if trace:
+        print(f"step count: {len(events)}")
 
     hmap: dict[int, int] = {}
     bo_size: dict[int, int] = {}
@@ -1833,173 +2012,189 @@ def replay_events(events: list[tuple], *, verbose: bool = False) -> int:
     pending: list[tuple[int, bytes]] = []
     keep: list[ctypes.Array] = []
     idx = 0
+    ok = False
 
-    for item in events:
-        kind = item[0]
-        if kind == "side":
-            pending.append((item[1], item[2]))
-            continue
+    try:
+        for item in events:
+            kind = item[0]
+            if kind == "side":
+                pending.append((item[1], item[2]))
+                continue
 
-        if kind == "gem":
-            _, handle, _gpu_va, bo_off, data = item
-            handle = hmap.get(handle, handle)
-            mm = mmaps.get(handle)
-            if mm is not None:
-                n = min(len(data), len(mm) - bo_off)
-                if n > 0:
-                    mm[bo_off : bo_off + n] = data[:n]
-            idx += 1
-            continue
-
-        _, req, cap_ret, arg_in, cap_out = item
-        if (req & 0xFF) in SKIP_IOCTLS:
-            idx += 1
-            continue
-
-        arg = bytearray(arg_in)
-        nr = req & 0xFF
-        _patch_ioctl_arg(nr, arg, hmap)
-
-        sides: list[tuple[int, ctypes.Array]] = []
-        bind_sync: list[ctypes.Array] = []
-        while pending:
-            sk, data = pending.pop(0)
-            sb = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
-            sb_view = bytearray(sb)
-            if sk == PANT_SIDE_VM_BIND_OPS:
-                _patch_vm_bind_ops(sb_view, hmap)
-            elif sk in (PANT_SIDE_SYNC_OPS, PANT_SIDE_BIND_SYNC_OPS):
-                _patch_sync_ops(sb_view, hmap)
-            elif sk == PANT_SIDE_SYNCOBJ_HANDLES:
-                _patch_syncobj_handles(sb_view, hmap)
-            for i, b in enumerate(sb_view):
-                sb[i] = b
-            if sk == PANT_SIDE_BIND_SYNC_OPS:
-                bind_sync.append(sb)
-            else:
-                sides.append((sk, sb))
-            keep.append(sb)
-
-        if nr == Req_DEV_QUERY and sides:
-            struct.pack_into("<Q", arg, 8, ctypes.addressof(sides[0][1]))
-        elif nr == Req_VM_BIND and sides:
-            struct.pack_into("<Q", arg, 16, ctypes.addressof(sides[0][1]))
-            if bind_sync:
-                struct.pack_into("<Q", sides[0][1], 40, ctypes.addressof(bind_sync[0]))
-        elif nr == Req_GROUP_CREATE and sides:
-            struct.pack_into("<Q", arg, 8, ctypes.addressof(sides[0][1]))
-        elif nr == Req_GROUP_SUBMIT:
-            qs = next((sb for k, sb in sides if k == PANT_SIDE_QUEUE_SUBMITS), None)
-            if qs is not None:
-                struct.pack_into("<Q", arg, 16, ctypes.addressof(qs))
-                struct.pack_into("<I", qs, 16, _read_flush_id(fd))
-                sync = next((sb for k, sb in sides if k == PANT_SIDE_SYNC_OPS), None)
-                if sync is not None:
-                    struct.pack_into("<Q", qs, 32, ctypes.addressof(sync))
-                if struct.unpack_from("<I", qs, 4)[0] == 160:
-                    _sync_mapped_bos(fd, mmaps, hmap, write=True)
-        elif nr == Req_SYNCOBJ_WAIT:
-            for sk, sb in sides:
-                if sk == PANT_SIDE_SYNCOBJ_HANDLES:
-                    hb = bytearray(sb)
-                    _patch_syncobj_handles(hb, hmap)
-                    for i, b in enumerate(hb):
-                        sb[i] = b
-                    struct.pack_into("<Q", arg, 0, ctypes.addressof(sb))
-                    break
-        elif nr == Req_SYNCOBJ_TIMELINE_WAIT:
-            handles_sb = next((sb for k, sb in sides if k == PANT_SIDE_SYNCOBJ_HANDLES), None)
-            points_sb = next((sb for k, sb in sides if k == PANT_SIDE_SYNCOBJ_POINTS), None)
-            if handles_sb is None:
-                if verbose:
-                    print(f"[{idx}] ioctl 0x{req:08x} skipped (no timeline sidecar)")
+            if kind == "gem":
+                _, handle, _gpu_va, bo_off, data = item
+                handle = hmap.get(handle, handle)
+                mm = mmaps.get(handle)
+                if trace:
+                    tracer.seed(idx, handle, len(data), bo_off)
+                if mm is not None:
+                    n = min(len(data), len(mm) - bo_off)
+                    if n > 0:
+                        mm[bo_off : bo_off + n] = data[:n]
                 idx += 1
                 continue
-            hb = bytearray(handles_sb)
-            _patch_syncobj_handles(hb, hmap)
-            for i, b in enumerate(hb):
-                handles_sb[i] = b
-            struct.pack_into("<Q", arg, 0, ctypes.addressof(handles_sb))
-            if points_sb is not None:
-                struct.pack_into("<Q", arg, 8, ctypes.addressof(points_sb))
 
-        buf = (ctypes.c_uint8 * len(arg)).from_buffer_copy(bytes(arg))
-        try:
-            ret = _ioctl(fd, req, buf)
-        except OSError as exc:
-            if (req & 0xFF) in (Req_SYNCOBJ_WAIT, Req_SYNCOBJ_TIMELINE_WAIT) and exc.errno in (22, 62):
-                if verbose:
-                    print(f"[{idx}] ioctl 0x{req:08x} wait skipped ({exc})")
+            _, req, cap_ret, arg_in, cap_out = item
+            nr = req & 0xFF
+            if nr in SKIP_IOCTLS:
+                if trace:
+                    tracer.skip(idx, nr, req, "explicitly skipped opcode")
                 idx += 1
                 continue
-            raise
-        live = bytes(buf)
-        _learn(nr, cap_out, live, hmap)
 
-        if nr == 0xCC and len(arg_in) >= 24:
-            _src = hmap.get(struct.unpack_from("<I", arg_in, 0)[0], struct.unpack_from("<I", arg_in, 0)[0])
-            _dst = hmap.get(struct.unpack_from("<I", arg_in, 4)[0], struct.unpack_from("<I", arg_in, 4)[0])
-            _dst_point = struct.unpack_from("<Q", arg_in, 16)[0]
+            arg = bytearray(arg_in)
+            _patch_ioctl_arg(nr, arg, hmap)
+
+            sides: list[tuple[int, ctypes.Array]] = []
+            bind_sync: list[ctypes.Array] = []
+            while pending:
+                sk, data = pending.pop(0)
+                sb = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
+                sb_view = bytearray(sb)
+                if sk == PANT_SIDE_VM_BIND_OPS:
+                    _patch_vm_bind_ops(sb_view, hmap)
+                elif sk in (PANT_SIDE_SYNC_OPS, PANT_SIDE_BIND_SYNC_OPS):
+                    _patch_sync_ops(sb_view, hmap)
+                elif sk == PANT_SIDE_SYNCOBJ_HANDLES:
+                    _patch_syncobj_handles(sb_view, hmap)
+                for i, b in enumerate(sb_view):
+                    sb[i] = b
+                if sk == PANT_SIDE_BIND_SYNC_OPS:
+                    bind_sync.append(sb)
+                else:
+                    sides.append((sk, sb))
+                keep.append(sb)
+
+            if nr == Req_DEV_QUERY and sides:
+                struct.pack_into("<Q", arg, 8, ctypes.addressof(sides[0][1]))
+            elif nr == Req_VM_BIND and sides:
+                struct.pack_into("<Q", arg, 16, ctypes.addressof(sides[0][1]))
+                if bind_sync:
+                    struct.pack_into("<Q", sides[0][1], 40, ctypes.addressof(bind_sync[0]))
+            elif nr == Req_GROUP_CREATE and sides:
+                struct.pack_into("<Q", arg, 8, ctypes.addressof(sides[0][1]))
+            elif nr == Req_GROUP_SUBMIT:
+                qs = next((sb for k, sb in sides if k == PANT_SIDE_QUEUE_SUBMITS), None)
+                if qs is not None:
+                    struct.pack_into("<Q", arg, 16, ctypes.addressof(qs))
+                    struct.pack_into("<I", qs, 16, _read_flush_id(fd))
+                    sync = next((sb for k, sb in sides if k == PANT_SIDE_SYNC_OPS), None)
+                    if sync is not None:
+                        struct.pack_into("<Q", qs, 32, ctypes.addressof(sync))
+                    if struct.unpack_from("<I", qs, 4)[0] == 160:
+                        _sync_mapped_bos(fd, mmaps, hmap, write=True)
+            elif nr == Req_SYNCOBJ_WAIT:
+                for sk, sb in sides:
+                    if sk == PANT_SIDE_SYNCOBJ_HANDLES:
+                        hb = bytearray(sb)
+                        _patch_syncobj_handles(hb, hmap)
+                        for i, b in enumerate(hb):
+                            sb[i] = b
+                        struct.pack_into("<Q", arg, 0, ctypes.addressof(sb))
+                        break
+            elif nr == Req_SYNCOBJ_TIMELINE_WAIT:
+                handles_sb = next((sb for k, sb in sides if k == PANT_SIDE_SYNCOBJ_HANDLES), None)
+                points_sb = next((sb for k, sb in sides if k == PANT_SIDE_SYNCOBJ_POINTS), None)
+                if handles_sb is None:
+                    if verbose:
+                        print(f"[{idx}] ioctl 0x{req:08x} skipped (no timeline sidecar)")
+                    if trace:
+                        tracer.skip(idx, nr, req, "no timeline sidecar")
+                    idx += 1
+                    continue
+                hb = bytearray(handles_sb)
+                _patch_syncobj_handles(hb, hmap)
+                for i, b in enumerate(hb):
+                    handles_sb[i] = b
+                struct.pack_into("<Q", arg, 0, ctypes.addressof(handles_sb))
+                if points_sb is not None:
+                    struct.pack_into("<Q", arg, 8, ctypes.addressof(points_sb))
+
+            buf = (ctypes.c_uint8 * len(arg)).from_buffer_copy(bytes(arg))
             try:
-                _wait_timeline_syncobj(fd, _dst, _dst_point)
-            except OSError:
+                ret = _ioctl(fd, req, buf)
+            except OSError as exc:
+                if nr in (Req_SYNCOBJ_WAIT, Req_SYNCOBJ_TIMELINE_WAIT) and exc.errno in (22, 62):
+                    if verbose:
+                        print(f"[{idx}] ioctl 0x{req:08x} wait skipped ({exc})")
+                    if trace:
+                        tracer.skip(idx, nr, req, str(exc))
+                    idx += 1
+                    continue
+                raise
+            live = bytes(buf)
+            _learn(nr, cap_out, live, hmap)
+
+            if nr == Req_SYNCOBJ_TRANSFER and len(arg_in) >= 24:
+                _src = hmap.get(struct.unpack_from("<I", arg_in, 0)[0], struct.unpack_from("<I", arg_in, 0)[0])
+                _dst = hmap.get(struct.unpack_from("<I", arg_in, 4)[0], struct.unpack_from("<I", arg_in, 4)[0])
+                _dst_point = struct.unpack_from("<Q", arg_in, 16)[0]
                 try:
-                    _wait_syncobj(fd, _dst)
+                    _wait_timeline_syncobj(fd, _dst, _dst_point)
                 except OSError:
-                    pass
-            for _ in range(200):
+                    try:
+                        _wait_syncobj(fd, _dst)
+                    except OSError:
+                        pass
+                for _ in range(200):
+                    rc = _drain_output(fd, mmaps, hmap)
+                    if rc == 0:
+                        ok = True
+                        return 0
+                    time.sleep(0.01)
+
+            if nr == Req_GROUP_SUBMIT:
+                sync = next((sb for k, sb in sides if k == PANT_SIDE_SYNC_OPS), None)
+                if sync is not None and len(sync) >= 16:
+                    flags, sig_handle = struct.unpack_from("<II", sync, 0)
+                    sig_handle = hmap.get(sig_handle, sig_handle)
+                    if flags & 0x80000000:
+                        point = struct.unpack_from("<Q", sync, 8)[0]
+                        try:
+                            _wait_timeline_syncobj(fd, sig_handle, point)
+                        except OSError:
+                            pass
+                    elif flags & 1:
+                        try:
+                            _wait_syncobj(fd, sig_handle, flags=flags & 1)
+                        except OSError:
+                            pass
                 rc = _drain_output(fd, mmaps, hmap)
                 if rc == 0:
+                    ok = True
                     return 0
-                time.sleep(0.01)
 
-        if nr == Req_GROUP_SUBMIT:
-            sync = next((sb for k, sb in sides if k == PANT_SIDE_SYNC_OPS), None)
-            if sync is not None and len(sync) >= 16:
-                flags, sig_handle = struct.unpack_from("<II", sync, 0)
-                sig_handle = hmap.get(sig_handle, sig_handle)
-                if flags & 0x80000000:
-                    point = struct.unpack_from("<Q", sync, 8)[0]
-                    try:
-                        _wait_timeline_syncobj(fd, sig_handle, point)
-                    except OSError:
-                        pass
-                elif flags & 1:
-                    try:
-                        _wait_syncobj(fd, sig_handle, flags=flags & 1)
-                    except OSError:
-                        pass
-            rc = _drain_output(fd, mmaps, hmap)
-            if rc == 0:
-                return 0
+            if nr == Req_BO_CREATE and len(live) >= 20:
+                handle = struct.unpack_from("<I", live, 16)[0]
+                bo_size[handle] = struct.unpack_from("<Q", live, 0)[0]
 
-        if nr == Req_BO_CREATE and len(live) >= 20:
-            handle = struct.unpack_from("<I", live, 16)[0]
-            bo_size[handle] = struct.unpack_from("<Q", live, 0)[0]
+            if nr == Req_BO_MMAP and len(live) >= 16:
+                handle = struct.unpack_from("<I", live, 0)[0]
+                offset = struct.unpack_from("<Q", live, 8)[0]
+                size = bo_size.get(handle, 4096)
+                map_sz = (size + 4095) & ~4095
+                mmaps[handle] = mmap.mmap(
+                    fd, map_sz, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=offset
+                )
 
-        if nr == Req_BO_MMAP and len(live) >= 16:
-            handle = struct.unpack_from("<I", live, 0)[0]
-            offset = struct.unpack_from("<Q", live, 8)[0]
-            size = bo_size.get(handle, 4096)
-            map_sz = (size + 4095) & ~4095
-            mmaps[handle] = mmap.mmap(
-                fd, map_sz, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=offset
-            )
+            if nr == Req_SYNCOBJ_WAIT or nr == Req_SYNCOBJ_TIMELINE_WAIT:
+                rc = _drain_output(fd, mmaps, hmap)
+                if rc == 0:
+                    ok = True
+                    return 0
+                out_h = hmap.get(0x11, 0x11)
+                if out_h in mmaps and verbose:
+                    print(f"out_bo handle={out_h} {struct.unpack('<4i', mmaps[out_h][:16])}")
 
-        if nr == Req_SYNCOBJ_WAIT or nr == Req_SYNCOBJ_TIMELINE_WAIT:
-            rc = _drain_output(fd, mmaps, hmap)
-            if rc == 0:
-                return 0
-            out_h = hmap.get(0x11, 0x11)
-            if out_h in mmaps and verbose:
-                print(f"out_bo handle={out_h} {struct.unpack('<4i', mmaps[out_h][:16])}")
+            if verbose:
+                print(f"[{idx}] ioctl 0x{req:08x} ret={ret} cap={cap_ret}")
+            tracer.ioevent(idx, nr, req, ret=ret, cap_ret=cap_ret)
+            idx += 1
 
-        if verbose:
-            print(f"[{idx}] ioctl 0x{req:08x} ret={ret} cap={cap_ret}")
-        idx += 1
-
-    print("FAIL: expected output not found in mapped BOs", file=sys.stderr)
-    return 1
+        print("FAIL: expected output not found in mapped BOs", file=sys.stderr)
+        return 1
+    finally:
+        tracer.finish(ok=ok)
 
 
 def main() -> int:
@@ -2012,7 +2207,7 @@ def main() -> int:
         print(f"A={list(INPUT_A)} B={list(INPUT_B)} expected={list(EXPECTED)}")
         return 0
     try:
-        return mesa_vadd(INPUT_A, INPUT_B, verbose=args.verbose)
+        return mesa_vadd(INPUT_A, INPUT_B, verbose=args.verbose, trace=True)
     except OSError as exc:
         print(exc, file=sys.stderr)
         return 1

@@ -107,7 +107,9 @@ Run:
 
 ```bash
 python3 examples/add_cl.py
-# or C build: make -C examples cl-add   # needs ocl-icd-opencl-dev build-essential
+# or build the C sample directly (needs ocl-icd-opencl-dev + build-essential)
+#   gcc -O2 -Wall -Wextra -o /tmp/cl_add experiemental/cl_add.c -lOpenCL
+#   RUSTICL_ENABLE=panfrost /tmp/cl_add
 ```
 
 Expected:
@@ -121,9 +123,10 @@ PASS
 ### Kbase capture / replay (BSP `/dev/mali0` — vendor kernel)
 
 ```bash
-make -C experiemental test-dry     # parse synthetic capture (any host)
-make -C experiemental test-live    # send real ioctls to /dev/mali0
-make -C experiemental capture APP=./your_gles_app CAP=foo.mcap
+python3 experiemental/tools/mcap.py gen-sample -o /tmp/test.mcap
+python3 experiemental/replay.py /tmp/test.mcap --dry-run   # parse synthetic capture (any host)
+python3 experiemental/replay.py /tmp/test.mcap              # send ioctls to /dev/mali0 (requires device)
+CAPTURE_PATH=/tmp/foo.mcap LD_PRELOAD=experiemental/capture/kbase_capture.so ./your_gles_app
 python3 experiemental/replay.py foo.mcap --dry-run
 python3 experiemental/replay.py foo.mcap
 ```
